@@ -1,7 +1,7 @@
 /**
- * WorkloadsSync.js
- * Contiene la lógica principal para sincronizar las pestañas de cargas de trabajo (Workloads)
- * desde la hoja de cálculo origen a la hoja de cálculo activa, y para consolidar dichas pestañas.
+ * SyncWorkloads.js
+ * Sincroniza las 4 pestañas principales (Committed/Uncommitted) desde el origen al destino,
+ * preservando comentarios, status y registrando cambios en Change Log.
  */
 
 function syncWorkloadSheets() {
@@ -9,46 +9,16 @@ function syncWorkloadSheets() {
   var ssDest = SpreadsheetApp.getActiveSpreadsheet();
   
   if (!ssDest) {
-    Logger.log("No se encontró una hoja de cálculo activa. Asegúrate de ejecutar este script dentro de una hoja de cálculo.");
+    Logger.log("No se encontró una hoja de cálculo activa.");
     return;
   }
   
-  var sheetsToSync = CONFIG.SHEETS_TO_SYNC;
+  var sheetsToSync = CONFIG.CORE_SHEETS_TO_SYNC;
   var logEntries = [];
   var timestamp = new Date();
   var cutoffTime = timestamp.getTime() - (7 * 24 * 60 * 60 * 1000);
   var activeHighlights = {};
   
-  function getColIndex(headerList, name) {
-    for (var c = 0; c < headerList.length; c++) {
-      if (headerList[c] && headerList[c].toString().trim().toLowerCase() === name.toLowerCase()) {
-        return c;
-      }
-    }
-    return -1;
-  }
-
-  function valuesEqual(val1, val2) {
-    if (val1 === null || val1 === undefined) val1 = "";
-    if (val2 === null || val2 === undefined) val2 = "";
-    
-    if (val1 instanceof Date && val2 instanceof Date) {
-      return val1.getTime() === val2.getTime();
-    }
-    return val1.toString().trim() === val2.toString().trim();
-  }
-
-  function formatLogVal(val) {
-    if (val instanceof Date) {
-      try {
-        return Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd");
-      } catch (e) {
-        return val.toString();
-      }
-    }
-    return val !== null && val !== undefined ? val.toString() : "";
-  }
-
   // Get or create Change Log sheet
   var logSheetName = "Change Log";
   var logSheet = ssDest.getSheetByName(logSheetName);
@@ -85,6 +55,11 @@ function syncWorkloadSheets() {
     
     if (!sourceSheet) {
       Logger.log("La pestaña origen no existe: " + sheetName);
+      var destSheet = ssDest.getSheetByName(sheetName);
+      if (!destSheet) {
+        destSheet = ssDest.insertSheet(sheetName);
+        Logger.log("Pestaña vacía creada en destino (origen faltante): " + sheetName);
+      }
       continue;
     }
     
@@ -113,7 +88,11 @@ function syncWorkloadSheets() {
     
     var filteredValues = [headers];
     for (var r = 1; r < sourceValues.length; r++) {
-      filteredValues.push(sourceValues[r].slice());
+      var row = sourceValues[r];
+      var wId = row[workloadIdIdx] ? row[workloadIdIdx].toString().trim() : "";
+      if (wId) {
+        filteredValues.push(row.slice());
+      }
     }
     
     var destSheet = ssDest.getSheetByName(sheetName);
@@ -287,139 +266,5 @@ function syncWorkloadSheets() {
     logSheet.getRange(lastLogRow + 1, 1, logEntries.length, 7).setValues(logEntries);
   }
   
-  Logger.log("¡Sincronización de pestañas individuales completada! Iniciando consolidación...");
-  createConsolidatedWorkloads();
-  Logger.log("¡Proceso completo finalizado con éxito!");
-}
-
-/**
- * createConsolidatedWorkloads
- * Genera o actualiza la pestaña 'Consolidated Workloads' agrupando las 4 pestañas sincronizadas.
- * Función separada para optimizar rendimiento y permitir ejecución modular.
- */
-function createConsolidatedWorkloads() {
-  var ssDest = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ssDest) {
-    Logger.log("No se encontró una hoja de cálculo activa.");
-    return;
-  }
-  
-  var sheetsToSync = CONFIG.SHEETS_TO_SYNC;
-  var consolidatedSheetName = "Consolidated Workloads";
-  var allSheetsData = [];
-  
-  for (var i = 0; i < sheetsToSync.length; i++) {
-    var sheetName = sheetsToSync[i];
-    if (sheetName.indexOf("(All)") !== -1) {
-      continue;
-    }
-    var sheet = ssDest.getSheetByName(sheetName);
-    if (!sheet) {
-      Logger.log("La pestaña " + sheetName + " no existe en el documento actual.");
-      continue;
-    }
-    
-    var lastRow = sheet.getLastRow();
-    var lastCol = sheet.getLastColumn();
-    if (lastRow <= 1 || lastCol === 0) {
-      continue;
-    }
-    
-    var range = sheet.getRange(1, 1, lastRow, lastCol);
-    var values = range.getValues();
-    var backgrounds = range.getBackgrounds();
-    
-    allSheetsData.push({
-      sheetName: sheetName,
-      headers: values[0],
-      rows: values.slice(1),
-      backgrounds: backgrounds.slice(1)
-    });
-  }
-  
-  if (allSheetsData.length > 0) {
-    var masterHeaders = [];
-    for (var s = 0; s < allSheetsData.length; s++) {
-      var sHeaders = allSheetsData[s].headers;
-      for (var h = 0; h < sHeaders.length; h++) {
-        var hName = sHeaders[h] !== null && sHeaders[h] !== undefined ? sHeaders[h].toString().trim() : "";
-        if (hName && masterHeaders.indexOf(hName) === -1) {
-          masterHeaders.push(hName);
-        }
-      }
-    }
-    masterHeaders.push("Commit Status");
-    
-    var allConsolidatedRows = [masterHeaders];
-    var allConsolidatedBackgrounds = [];
-    var masterHeaderBg = [];
-    for (var mh = 0; mh < masterHeaders.length; mh++) {
-      masterHeaderBg.push(null);
-    }
-    allConsolidatedBackgrounds.push(masterHeaderBg);
-    
-    var commitStatusIdx = masterHeaders.length - 1;
-    
-    for (var s = 0; s < allSheetsData.length; s++) {
-      var sData = allSheetsData[s];
-      var sName = sData.sheetName;
-      var sHeaders = sData.headers;
-      
-      var commitStatus = "";
-      if (sName.indexOf("Uncommitted") !== -1) {
-        commitStatus = "Uncommitted";
-      } else if (sName.indexOf("Committed") !== -1) {
-        commitStatus = "Committed";
-      }
-      
-      for (var r = 0; r < sData.rows.length; r++) {
-        var sRow = sData.rows[r];
-        var sBg = sData.backgrounds[r][0]; // Row background
-        
-        var consolRow = [];
-        var consolBg = [];
-        for (var mh = 0; mh < masterHeaders.length; mh++) {
-          consolRow.push("");
-          consolBg.push(sBg);
-        }
-        
-        for (var c = 0; c < sHeaders.length; c++) {
-          var hName = sHeaders[c] !== null && sHeaders[c] !== undefined ? sHeaders[c].toString().trim() : "";
-          if (hName) {
-            var mIdx = masterHeaders.indexOf(hName);
-            if (mIdx !== -1) {
-              consolRow[mIdx] = sRow[c] !== null && sRow[c] !== undefined ? sRow[c] : "";
-            }
-          }
-        }
-        
-        consolRow[commitStatusIdx] = commitStatus;
-        allConsolidatedRows.push(consolRow);
-        allConsolidatedBackgrounds.push(consolBg);
-      }
-    }
-    
-    var consolSheet = ssDest.getSheetByName(consolidatedSheetName);
-    if (!consolSheet) {
-      consolSheet = ssDest.insertSheet(consolidatedSheetName);
-      Logger.log("Pestaña consolidada creada: " + consolidatedSheetName);
-    }
-    
-    try {
-      consolSheet.clear();
-    } catch (e) {
-      Logger.log("Error al limpiar consolSheet con clear(): " + e.message + ". Recreando la pestaña consolidada...");
-      var consolPos = consolSheet.getIndex();
-      ssDest.deleteSheet(consolSheet);
-      consolSheet = ssDest.insertSheet(consolidatedSheetName, consolPos - 1);
-    }
-    
-    var totalConsolRows = allConsolidatedRows.length;
-    var totalConsolCols = masterHeaders.length;
-    consolSheet.getRange(1, 1, totalConsolRows, totalConsolCols).setValues(allConsolidatedRows);
-    consolSheet.getRange(1, 1, totalConsolRows, totalConsolCols).setBackgrounds(allConsolidatedBackgrounds);
-    Logger.log("Pestaña consolidada actualizada con éxito.");
-  } else {
-    Logger.log("No hay datos en las pestañas individuales para consolidar.");
-  }
+  Logger.log("¡Sincronización de pestañas principales completada!");
 }
