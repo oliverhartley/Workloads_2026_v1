@@ -193,7 +193,7 @@ function syncWorkloadsToPartners() {
       
       var headerRange = targetSheet.getRange(1, 1, 1, numCols);
       headerRange.setFontWeight("bold");
-      headerRange.setBackground("#f3f3f3"); // Gris limpio
+      headerRange.setBackground(null); // Reseteado (sin color de fondo)
       
       // Asegurar fuente normal para los datos
       targetSheet.getRange(2, 1, numRows - 1, numCols).setFontWeight("normal");
@@ -201,6 +201,28 @@ function syncWorkloadsToPartners() {
       // Auto-ajustar el ancho de las columnas para perfecta lectura
       for (var col = 1; col <= numCols; col++) {
         targetSheet.autoResizeColumn(col);
+      }
+
+      // Aplicar anchos de columna manuales y envoltura de texto según requerimientos
+      // 1. Columna Y (Comentarios) -> 400px, Wrap
+      var comentariosCol = getColIndex(headers, "Comentarios") + 1;
+      if (comentariosCol === 0 && numCols >= 25) comentariosCol = 25; // Fallback a Y
+      if (comentariosCol > 0 && comentariosCol <= numCols) {
+        targetSheet.setColumnWidth(comentariosCol, 400);
+        targetSheet.getRange(1, comentariosCol, numRows, 1).setWrap(true);
+      }
+
+      // 2. Columna AC (Workload Link) -> 100px
+      var wlCol = getColIndex(headers, "Workload Link") + 1;
+      if (wlCol === 0 && numCols >= 29) wlCol = 29; // Fallback a AC
+      if (wlCol > 0 && wlCol <= numCols) {
+        targetSheet.setColumnWidth(wlCol, 100);
+      }
+
+      // 3. Columna D (Columna 4) -> 250px, Wrap
+      if (numCols >= 4) {
+        targetSheet.setColumnWidth(4, 250);
+        targetSheet.getRange(1, 4, numRows, 1).setWrap(true);
       }
 
       // Mostrar todas las columnas primero para asegurar un estado consistente
