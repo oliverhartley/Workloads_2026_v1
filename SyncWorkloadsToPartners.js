@@ -203,6 +203,26 @@ function syncWorkloadsToPartners() {
         targetSheet.autoResizeColumn(col);
       }
 
+      // Mostrar todas las columnas primero para asegurar un estado consistente
+      try {
+        var maxCols = targetSheet.getMaxColumns();
+        if (maxCols > 0) {
+          targetSheet.showColumns(1, maxCols);
+        }
+      } catch (e) {
+        Logger.log("Advertencia al mostrar todas las columnas: " + e.message);
+      }
+
+      // Ocultar columnas solicitadas por el usuario para vista limpia del socio
+      // Columnas: A, C, E-F, H-J, L-P, R-X, AA-AB
+      hideColumnRangeSafely(targetSheet, 1, 1, numCols);   // A
+      hideColumnRangeSafely(targetSheet, 3, 1, numCols);   // C
+      hideColumnRangeSafely(targetSheet, 5, 2, numCols);   // E-F
+      hideColumnRangeSafely(targetSheet, 8, 3, numCols);   // H-J
+      hideColumnRangeSafely(targetSheet, 12, 5, numCols);  // L-P
+      hideColumnRangeSafely(targetSheet, 18, 7, numCols);  // R-X
+      hideColumnRangeSafely(targetSheet, 27, 2, numCols);  // AA-AB
+
       Logger.log("¡Socio '" + partner.name + "' sincronizado con éxito! " + partner.workloads.length + " filas actualizadas.");
       totalUpdatedPartners++;
     } catch (e) {
@@ -393,4 +413,18 @@ function pullPartnerUpdates() {
   }
   
   Logger.log("Proceso de recuperación completado. Total de celdas actualizadas en origen: " + totalUpdatedCells);
+}
+
+/**
+ * Oculta un rango de columnas de forma segura, asegurando no exceder el número total de columnas.
+ */
+function hideColumnRangeSafely(sheet, startCol, numColsToHide, totalCols) {
+  if (startCol <= totalCols) {
+    var colsToHide = Math.min(numColsToHide, totalCols - startCol + 1);
+    try {
+      sheet.hideColumns(startCol, colsToHide);
+    } catch (e) {
+      Logger.log("Error al ocultar columnas desde " + startCol + " (" + colsToHide + "): " + e.message);
+    }
+  }
 }
