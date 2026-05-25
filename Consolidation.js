@@ -53,6 +53,7 @@ function createConsolidatedWorkloads() {
       }
     }
     masterHeaders.push("Commit Status");
+    masterHeaders.push("Workload Link");
     
     var allConsolidatedRows = [masterHeaders];
     var allConsolidatedBackgrounds = [];
@@ -62,7 +63,8 @@ function createConsolidatedWorkloads() {
     }
     allConsolidatedBackgrounds.push(masterHeaderBg);
     
-    var commitStatusIdx = masterHeaders.length - 1;
+    var commitStatusIdx = masterHeaders.indexOf("Commit Status");
+    var workloadLinkIdx = masterHeaders.indexOf("Workload Link");
     
     // Identificar el índice de la columna del Socio/Partner en masterHeaders
     var partnerColIdx = -1;
@@ -113,6 +115,9 @@ function createConsolidatedWorkloads() {
         }
         
         consolRow[commitStatusIdx] = commitStatus;
+        
+        var workloadLink = "https://vector.lightning.force.com/lightning/r/Workload__c/" + wId + "/view";
+        consolRow[workloadLinkIdx] = workloadLink;
         
         // Filtrar si la columna de socio está vacía
         if (partnerColIdx !== -1) {
