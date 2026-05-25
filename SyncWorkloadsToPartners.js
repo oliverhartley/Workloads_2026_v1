@@ -5,6 +5,14 @@
  */
 
 function syncWorkloadsToPartners() {
+  // Paso 0: Recuperar comentarios y status desde las planillas de los socios (origen de verdad)
+  Logger.log("Iniciando la recuperación de comentarios y status desde las planillas de los socios...");
+  try {
+    pullPartnerUpdates();
+  } catch (e) {
+    Logger.log("Error al recuperar actualizaciones de socios: " + e.message + ". Se continuará con los datos existentes.");
+  }
+
   // Paso 1: Asegurar que la pestaña consolidada esté completamente actualizada con los últimos datos
   Logger.log("Iniciando la consolidación de cargas de trabajo antes de distribuir...");
   try {
@@ -204,4 +212,185 @@ function syncWorkloadsToPartners() {
 
   Logger.log("Sincronización de cargas de trabajo a planillas de socios completada.");
   Logger.log("Socios actualizados con éxito: " + totalUpdatedPartners + " de " + partners.length + ". Cargas no coincidentes: " + unmatchedCount);
+}
+
+/**
+ * Recupera los comentarios y status modificados por los socios en sus planillas individuales
+ * y los aplica de vuelta a las pestañas principales en el archivo central.
+ */
+function pullPartnerUpdates() {
+  var ssDest = SpreadsheetApp.getActiveSpreadsheet();
+  var partnerSheet = ssDest.getSheetByName("Partner / Name");
+  if (!partnerSheet) {
+    Logger.log("No se encontró la pestaña 'Partner / Name' para recuperar actualizaciones.");
+    return;
+  }
+  
+  var partnerLastRow = partnerSheet.getLastRow();
+  if (partnerLastRow < 2) {
+    Logger.log("No hay socios configurados para recuperar actualizaciones.");
+    return;
+  }
+  
+  var partnerData = partnerSheet.getRange(2, 1, partnerLastRow - 1, 3).getValues();
+  var partners = [];
+  
+  for (var p = 0; p < partnerData.length; p++) {
+    var pName = partnerData[p][0] ? partnerData[p][0].toString().trim() : "";
+    var pSpreadsheetId = partnerData[p][2] ? partnerData[p][2].toString().trim() : "";
+    
+    if (pSpreadsheetId) {
+      partners.push({
+        name: pName,
+        spreadsheetId: pSpreadsheetId
+      });
+    }
+  }
+  
+  if (partners.length === 0) {
+    Logger.log("No hay socios válidos configurados para recuperar actualizaciones.");
+    return;
+  }
+  
+  var updates = {};
+  var totalPulled = 0;
+  
+  for (var p = 0; p < partners.length; p++) {
+    var partner = partners[p];
+    try {
+      var partnerSs = SpreadsheetApp.openById(partner.spreadsheetId);
+      var targetSheet = partnerSs.getSheetByName("Workloads");
+      if (!targetSheet) {
+        Logger.log("Socio '" + partner.name + "': No se encontró la pestaña 'Workloads'.");
+        continue;
+      }
+      
+      var lastRow = targetSheet.getLastRow();
+      var lastCol = targetSheet.getLastColumn();
+      if (lastRow < 2 || lastCol === 0) {
+        Logger.log("Socio '" + partner.name + "': La pestaña 'Workloads' está vacía.");
+        continue;
+      }
+      
+      var values = targetSheet.getRange(1, 1, lastRow, lastCol).getValues();
+      var headers = values[0];
+      
+      var wIdIdx = 0; // Column A
+      var comentariosIdx = getColIndex(headers, "Comentarios");
+      var statusIdx = getColIndex(headers, "Status");
+      
+      if (comentariosIdx === -1) {
+        Logger.log("Socio '" + partner.name + "': Advertencia: No se encontró la columna 'Comentarios'. Usando columna Y (index 24) como fallback.");
+        comentariosIdx = 24;
+      }
+      if (statusIdx === -1) {
+        Logger.log("Socio '" + partner.name + "': Advertencia: No se encontró la columna 'Status'. Usando columna Z (index 25) como fallback.");
+        statusIdx = 25;
+      }
+      
+      var partnerUpdatesCount = 0;
+      for (var r = 1; r < values.length; r++) {
+        var row = values[r];
+        var wId = row[wIdIdx] ? row[wIdIdx].toString().trim() : "";
+        if (wId) {
+          var comentarios = comentariosIdx < row.length ? row[comentariosIdx].toString().trim() : "";
+          var status = statusIdx < row.length ? row[statusIdx].toString().trim() : "";
+          
+          updates[wId] = {
+            comentarios: comentarios,
+            status: status,
+            partnerName: partner.name
+          };
+          partnerUpdatesCount++;
+          totalPulled++;
+        }
+      }
+      Logger.log("Socio '" + partner.name + "': Leídas " + partnerUpdatesCount + " filas para actualización.");
+    } catch (e) {
+      Logger.log("Error al recuperar datos del socio '" + partner.name + "': " + e.message);
+    }
+  }
+  
+  if (totalPulled === 0) {
+    Logger.log("No se encontraron datos para actualizar desde las planillas de los socios.");
+    return;
+  }
+  
+  Logger.log("Total de registros leídos para actualizar: " + totalPulled + ". Aplicando a pestañas principales...");
+  
+  var sheetsToSync = CONFIG.CORE_SHEETS_TO_SYNC;
+  var totalUpdatedCells = 0;
+  
+  for (var i = 0; i < sheetsToSync.length; i++) {
+    var sheetName = sheetsToSync[i];
+    var sheet = ssDest.getSheetByName(sheetName);
+    if (!sheet) continue;
+    
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 1 || lastCol === 0) continue;
+    
+    var range = sheet.getRange(1, 1, lastRow, lastCol);
+    var values = range.getValues();
+    var headers = values[0];
+    
+    var wIdIdx = 0; // Column A
+    var comentariosIdx = getColIndex(headers, "Comentarios");
+    var statusIdx = getColIndex(headers, "Status");
+    
+    var headersChanged = false;
+    if (comentariosIdx === -1) {
+      comentariosIdx = headers.length;
+      headers.push("Comentarios");
+      headersChanged = true;
+      Logger.log("Creada columna 'Comentarios' en pestaña principal '" + sheetName + "'");
+    }
+    if (statusIdx === -1) {
+      statusIdx = headers.length;
+      headers.push("Status");
+      headersChanged = true;
+      Logger.log("Creada columna 'Status' en pestaña principal '" + sheetName + "'");
+    }
+    
+    var sheetModified = false;
+    var sheetUpdatedCount = 0;
+    
+    for (var r = 1; r < values.length; r++) {
+      var row = values[r];
+      while (row.length < headers.length) {
+        row.push("");
+      }
+      
+      var wId = row[wIdIdx] ? row[wIdIdx].toString().trim() : "";
+      if (wId && updates.hasOwnProperty(wId)) {
+        var update = updates[wId];
+        
+        if (update.comentarios !== undefined && row[comentariosIdx].toString().trim() !== update.comentarios) {
+          row[comentariosIdx] = update.comentarios;
+          sheetModified = true;
+          sheetUpdatedCount++;
+          totalUpdatedCells++;
+        }
+        if (update.status !== undefined && row[statusIdx].toString().trim() !== update.status) {
+          row[statusIdx] = update.status;
+          sheetModified = true;
+          sheetUpdatedCount++;
+          totalUpdatedCells++;
+        }
+      }
+      values[r] = row;
+    }
+    
+    if (sheetModified || headersChanged) {
+      if (headersChanged) {
+        values[0] = headers;
+      }
+      var numRows = values.length;
+      var numCols = headers.length;
+      sheet.getRange(1, 1, numRows, numCols).setValues(values);
+      Logger.log("Pestaña '" + sheetName + "' actualizada con " + sheetUpdatedCount + " cambios de socios.");
+    }
+  }
+  
+  Logger.log("Proceso de recuperación completado. Total de celdas actualizadas en origen: " + totalUpdatedCells);
 }
